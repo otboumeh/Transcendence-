@@ -1,0 +1,80 @@
+groups:
+- name: node
+  rules:
+  - alert: HighCpuLoad
+    expr: 100 - (avg by(instance) (irate(node_cpu_seconds_total{mode="idle"}[1m])) * 100) > 80
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: High CPU load (instance {{ $labels.instance }})
+      description: "CPU load is > 80%\n  VALUE = {{ $value }}\n  LABELS = {{ $labels }}"
+
+  - alert: HighMemoryLoad
+    expr: (node_memory_MemTotal_bytes - node_memory_MemFree_bytes - node_memory_Buffers_bytes - node_memory_Cached_bytes) / node_memory_MemTotal_bytes * 100 > 80
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: High memory load (instance {{ $labels.instance }})
+      description: "Memory load is > 80%\n  VALUE = {{ $value }}\n  LABELS = {{ $labels }}"
+
+- name: nginx
+  rules:
+  - alert: NginxHighHttp4xxErrorRate
+    expr: sum(rate(nginx_http_requests_total{status=~"^4.."}[1m])) / sum(rate(nginx_http_requests_total[1m])) * 100 > 5
+    for: 1m
+    labels:
+      severity: warning
+    annotations:
+      summary: Nginx high HTTP 4xx error rate (instance {{ $labels.instance }})
+      description: "Too many HTTP requests with status 4xx (> 5%)\n  VALUE = {{ $value }}\n  LABELS = {{ $labels }}"
+
+  - alert: NginxHighHttp5xxErrorRate
+    expr: sum(rate(nginx_http_requests_total{status=~"^5.."}[1m])) / sum(rate(nginx_http_requests_total[1m])) * 100 > 5
+    for: 1m
+    labels:
+      severity: critical
+    annotations:
+      summary: Nginx high HTTP 5xx error rate (instance {{ $labels.instance }})
+      description: "Too many HTTP requests with status 5xx (> 5%)\n  VALUE = {{ $value }}\n  LABELS = {{ $labels }}"
+
+- name: php
+  rules:
+  - alert: PhpFpmHighProcessCount
+    expr: phpfpm_processes_total{state="active"} > 30
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: PHP-FPM high process count (instance {{ $labels.instance }})
+      description: "PHP-FPM active processes count is high\n  VALUE = {{ $value }}\n  LABELS = {{ $labels }}"
+
+  - alert: PhpFpmMaxChildrenReached
+    expr: phpfpm_max_children_reached_total > 0
+    for: 2m
+    labels:
+      severity: warning
+    annotations:
+      summary: PHP-FPM max children reached (instance {{ $labels.instance }})
+      description: "PHP-FPM has reached max_children\n  VALUE = {{ $value }}\n  LABELS = {{ $labels }}"
+
+- name: containers
+  rules:
+  - alert: ContainerHighCpuUsage
+    expr: (sum by(name) (rate(container_cpu_usage_seconds_total{name!=""}[1m])) / scalar(count(node_cpu_seconds_total{mode="idle"})) * 100) > 80
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: Container high CPU usage (instance {{ $labels.instance }})
+      description: "Container CPU usage is above 80%\n  VALUE = {{ $value }}\n  LABELS = {{ $labels }}"
+
+  - alert: ContainerHighMemoryUsage
+    expr: (container_memory_usage_bytes{name!=""} / container_spec_memory_limit_bytes{name!=""} * 100) > 80
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: Container high memory usage (instance {{ $labels.instance }})
+      description: "Container memory usage is above 80%\n  VALUE = {{ $value }}\n  LABELS = {{ $labels }}"

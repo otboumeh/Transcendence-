@@ -1,0 +1,12 @@
+# Ignorar archivos temporales de SQLite
+*.sqlite-journal
+*.sqlite-shm
+*.sqlite-wal
+
+# Ignorar backups automáticos
+*.db.backup
+*.sqlite.backup
+
+# NO ignorar la base de datos principal
+!database.sqlite
+!.gitkeep

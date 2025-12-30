@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Auth Debug Test</title>
+<style>
+    body { font-family: Arial, sans-serif; margin: 2rem; }
+    form { max-width: 400px; margin: auto; display: flex; flex-direction: column; gap: 1rem; }
+    input, button { padding: 0.5rem; font-size: 1rem; }
+    button { cursor: pointer; }
+    pre { background: #1e1e1e; color: #d4d4d4; padding: 1rem; border-radius: 5px; overflow-x: auto; white-space: pre-wrap; }
+    h3 { margin-top: 2rem; }
+</style>
+</head>
+<body>
+<h2>Prueba de autenticación con Debug</h2>
+
+<form id="authForm">
+    <input type="text" id="username" placeholder="Usuario" required>
+    <input type="password" id="password" placeholder="Contraseña" required>
+    <button type="submit">Enviar credenciales</button>
+</form>
+
+<form id="twoFaForm" style="display:none;">
+    <input type="text" id="twofa" placeholder="Código 2FA" required>
+    <button type="submit">Verificar 2FA</button>
+</form>
+
+<h3>Respuesta del servidor:</h3>
+<pre id="response"></pre>
+
+<script>
+const authForm = document.getElementById('authForm');
+const twoFaForm = document.getElementById('twoFaForm');
+const responseEl = document.getElementById('response');
+let pendingId = null;
+
+// Función para mostrar todo el debug
+async function debugFetch(url, body) {
+    try {
+        const res = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        });
+
+        const headers = {};
+        res.headers.forEach((v,k)=>headers[k]=v);
+
+        const text = await res.text();
+        let json = null;
+        try { json = JSON.parse(text); } catch {}
+
+        const output = {
+            url,
+            status: res.status,
+            ok: res.ok,
+            headers,
+            raw: text,
+            json
+        };
+
+        return output;
+
+    } catch (err) {
+        return { error: true, message: err.message };
+    }
+}
+
+// Manejo de formulario de login
+authForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const username = document.getElementById('username').value;
+    const pass = document.getElementById('pass').value;
+
+    const result = await debugFetch('/api/auth/login.php', { username, password });
+
+    responseEl.textContent = JSON.stringify(result, null, 2);
+
+    if (result.json && result.json.pending_2fa && result.json.id) {
+        pendingId = result.json.id;
+        authForm.style.display = 'none';
+        twoFaForm.style.display = 'flex';
+    }
+});
+
+// Manejo de formulario 2FA
+twoFaForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const code = document.getElementById('twofa').value;
+
+    const result = await debugFetch('/api/auth/verify-2fa.php', { id: pendingId, code });
+
+    responseEl.textContent = JSON.stringify(result, null, 2);
+
+    if (result.json && result.json.token) {
+        responseEl.textContent += `\n\n✅ Token recibido:\n${result.json.token}`;
+    }
+});
+</script>
+</body>
+</html>

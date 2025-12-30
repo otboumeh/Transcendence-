@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>WebSocket Test</title>
+    <style>
+        body { font-family: monospace; padding: 20px; background: #1a1a1a; color: #0f0; }
+        .log { padding: 5px; margin: 2px 0; border-left: 3px solid #0f0; }
+        .error { border-color: #f00; color: #f00; }
+        .success { border-color: #0f0; }
+        .info { border-color: #ff0; color: #ff0; }
+        button { padding: 10px 20px; margin: 5px; cursor: pointer; }
+        input { padding: 10px; width: 300px; }
+    </style>
+</head>
+<body>
+    <h1>🔌 WebSocket Test Client</h1>
+    <div>
+        <input type="text" id="wsUrl" value="ws://localhost:9180/ws/" placeholder="WebSocket URL">
+        <button onclick="connect()">Connect</button>
+        <button onclick="disconnect()">Disconnect</button>
+    </div>
+    
+    <div style="margin-top: 20px;">
+        <h3>Quick Actions:</h3>
+        <button onclick="sendAuth()">🔐 Send Auth (testuser1)</button>
+        <button onclick="sendPing()">📡 Send Ping</button>
+        <button onclick="getOnlineUsers()">👥 Get Online Users</button>
+    </div>
+    
+    <div style="margin-top: 20px;">
+        <input type="text" id="message" placeholder='{"type": "ping"}' style="width: 500px;">
+        <button onclick="sendMessage()">Send Custom Message</button>
+    </div>
+    <div style="margin-top: 20px;">
+        <button onclick="clearLogs()">Clear Logs</button>
+    </div>
+    <div id="logs" style="margin-top: 20px;"></div>
+
+    <script>
+        let ws = null;
+
+        function log(message, type = 'info') {
+            const logs = document.getElementById('logs');
+            const div = document.createElement('div');
+            div.className = `log ${type}`;
+            div.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            logs.insertBefore(div, logs.firstChild);
+        }
+
+        function connect() {
+            const url = document.getElementById('wsUrl').value;
+            log(`Conectando a ${url}...`, 'info');
+
+            try {
+                ws = new WebSocket(url);
+
+                ws.onopen = () => {
+                    log('✅ WebSocket conectado exitosamente', 'success');
+                };
+
+                ws.onclose = (event) => {
+                    log(`🔌 WebSocket cerrado. Code: ${event.code}, Reason: ${event.reason}`, 'info');
+                };
+
+                ws.onerror = (error) => {
+                    log(`❌ Error en WebSocket: ${error.message || 'Unknown error'}`, 'error');
+                };
+
+                ws.onmessage = (event) => {
+                    log(`📩 Mensaje recibido: ${event.data}`, 'success');
+                    try {
+                        const data = JSON.parse(event.data);
+                        log(`   Parsed: ${JSON.stringify(data, null, 2)}`, 'success');
+                    } catch (e) {
+                        // No es JSON
+                    }
+                };
+            } catch (error) {
+                log(`❌ Error al crear WebSocket: ${error.message}`, 'error');
+            }
+        }
+
+        function disconnect() {
+            if (ws) {
+                ws.close();
+                ws = null;
+                log('Desconectado manualmente', 'info');
+            } else {
+                log('No hay conexión activa', 'error');
+            }
+        }
+
+        function sendMessage() {
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                log('❌ WebSocket no está conectado', 'error');
+                return;
+            }
+
+            const message = document.getElementById('message').value;
+            try {
+                ws.send(message);
+                log(`📤 Mensaje enviado: ${message}`, 'success');
+            } catch (error) {
+                log(`❌ Error enviando mensaje: ${error.message}`, 'error');
+            }
+        }
+
+        function clearLogs() {
+            document.getElementById('logs').innerHTML = '';
+        }
+
+        async function sendAuth() {
+            // Primero hacer login para obtener el token
+            try {
+                const response = await fetch('https://localhost:9443/api/login.php', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username: 'testuser1', pass: 'Test123!' })
+                });
+                
+                const data = await response.json();
+                const token = data.details || data.token;
+                
+                if (!token) {
+                    log('❌ No se pudo obtener token', 'error');
+                    return;
+                }
+                
+                log(`✅ Token obtenido: ${token.substring(0, 50)}...`, 'success');
+                
+                // Enviar auth al WebSocket
+                const authMsg = JSON.stringify({
+                    type: 'auth',
+                    token: token
+                });
+                
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(authMsg);
+                    log(`📤 Auth enviado`, 'success');
+                } else {
+                    log('❌ WebSocket no está conectado', 'error');
+                }
+            } catch (error) {
+                log(`❌ Error en auth: ${error.message}`, 'error');
+            }
+        }
+
+        function sendPing() {
+            sendCustomMessage({ type: 'ping' });
+        }
+
+        function getOnlineUsers() {
+            sendCustomMessage({ type: 'get-online-users' });
+        }
+
+        function sendCustomMessage(obj) {
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                log('❌ WebSocket no está conectado', 'error');
+                return;
+            }
+            const message = JSON.stringify(obj);
+            ws.send(message);
+            log(`📤 Enviado: ${message}`, 'success');
+        }
+
+        function clearLogs() {
+            document.getElementById('logs').innerHTML = '';
+        }
+
+        // Auto-detectar URL basado en la ubicación actual
+        window.addEventListener('load', () => {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const defaultUrl = `${protocol}//${window.location.host}/ws/`;
+            document.getElementById('wsUrl').value = defaultUrl;
+            log(`URL detectada automáticamente: ${defaultUrl}`, 'info');
+        });
+    </script>
+</body>
+</html>

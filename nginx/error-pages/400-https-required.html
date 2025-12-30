@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>400 - HTTPS Requerido</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+        }
+        .container {
+            text-align: center;
+            background: rgba(255, 255, 255, 0.1);
+            padding: 40px;
+            border-radius: 15px;
+            backdrop-filter: blur(10px);
+            max-width: 600px;
+        }
+        h1 { font-size: 72px; margin: 0; }
+        h2 { font-size: 24px; margin: 10px 0; }
+        p { font-size: 16px; line-height: 1.6; }
+        .btn {
+            display: inline-block;
+            margin-top: 20px;
+            padding: 15px 30px;
+            background: white;
+            color: #667eea;
+            text-decoration: none;
+            border-radius: 25px;
+            font-weight: bold;
+            transition: transform 0.3s;
+        }
+        .btn:hover { transform: scale(1.05); }
+        code {
+            background: rgba(0,0,0,0.3);
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-family: monospace;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔒 400</h1>
+        <h2>HTTPS Requerido</h2>
+        <p>
+            Estás intentando acceder con HTTP plain a un puerto HTTPS.<br>
+            Por favor, usa <code>https://</code> en la URL.
+        </p>
+        <a href="https://localhost:9443/" class="btn">Ir a HTTPS</a>
+        <p style="font-size: 14px; margin-top: 30px; opacity: 0.8;">
+            Si ves un warning de seguridad, acepta el certificado auto-firmado (desarrollo)
+        </p>
+    </div>
+</body>
+</html>

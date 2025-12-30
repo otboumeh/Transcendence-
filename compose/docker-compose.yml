@@ -1,0 +1,802 @@
+# Modified docker-compose.yml with 42 campus constraints
+
+
+services:
+  # Main Services
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: transcendence-nginx
+    user: root
+    ports:
+      - "${NGINX_HTTP_PORT:-9180}:80"
+      - "${NGINX_HTTPS_PORT:-9443}:443"
+    labels:
+      - "app=transcendence"
+      - "tier=frontend"
+      - "works-with=backend"
+    volumes:
+      - ../nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ../nginx/conf.d/app.conf:/etc/nginx/conf.d/default.conf
+      # - ../nginx/conf.d/00-tuning.conf:/etc/nginx/conf.d/00-tuning.conf:ro
+      - ../nginx/snippets:/etc/nginx/snippets
+      - ../nginx/error-pages:/etc/nginx/error-pages:ro
+      - ../config/auth:/etc/nginx/auth:ro
+      - ../backend/public:/var/www/html/public:ro
+      - ../docker/nginx/docker-entrypoint.sh:/docker-entrypoint.sh:ro
+      - ../logs/nginx:/var/log/nginx  # Logs para ELK
+      - type: bind
+        source: ../config/ssl/fullchain.pem
+        target: /etc/ssl/fullchain.pem
+        read_only: true
+      - type: bind
+        source: ../config/ssl/privkey.pem
+        target: /etc/ssl/privkey.pem
+        read_only: true
+      - type: bind
+        source: ../config/ssl/dhparam.pem
+        target: /etc/ssl/dhparam.pem
+        read_only: true
+    environment:
+      - FRONTEND_PORT=${FRONTEND_PORT:-3000}
+      - BACKEND_PORT=${BACKEND_PORT:-9000}
+      - GAME_WS_PORT=${GAME_WS_PORT:-8081}
+      - GAME_WS_CONTAINER_PORT=${GAME_WS_CONTAINER_PORT:-8080}
+      - PROMETHEUS_PORT=${PROMETHEUS_PORT:-9090}
+      - GRAFANA_PORT=${GRAFANA_PORT:-3001}
+      - GRAFANA_CONTAINER_PORT=${GRAFANA_CONTAINER_PORT:-3000}
+      - CADVISOR_PORT=${CADVISOR_PORT:-8081}
+      - SCOPE_PORT=${SCOPE_PORT:-9584}
+    secrets:
+      - scope_htpasswd
+    entrypoint: ["/bin/sh", "/docker-entrypoint.sh"]
+    command: ["nginx", "-g", "daemon off;"]
+    networks: 
+      - frontend
+      - backend
+      - monitoring
+      - game
+    healthcheck:
+      test: ["CMD", "wget", "--no-check-certificate", "-q", "--spider", "https://localhost:443/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    depends_on:
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_healthy
+    # Configuración de logging
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+        labels: "tier,app"
+    # Mejoras de seguridad
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+      - CHOWN
+      - SETGID
+      - SETUID
+      - SYS_RESOURCE  # Add capability to change resource limits
+    security_opt:
+      - no-new-privileges:true
+    # System resource limits
+    ulimits:
+      nofile:
+        soft: 1024
+        hard: 1024
+    # Límites de recursos
+    deploy:
+      resources:
+        limits:
+#          cpus: '1.0'
+          memory: 512M
+        reservations:
+#          cpus: '0.5'
+          memory: 256M
+    # Reinicio automático
+    restart: unless-stopped
+    profiles: ["default", "prod", "dev", "monitoring"]
+
+  backend:
+    build:
+      context: ..
+      dockerfile: docker/backend/Dockerfile
+    container_name: transcendence-backend
+    expose:
+      - "${BACKEND_PORT:-9000}"
+    volumes:
+      - ../backend/public:/var/www/html/public
+      - ../backend/database:/var/www/html/database
+      - ../backend/srcs:/var/www/html/srcs
+      - ../config/auth/google_oauth_client.json:/var/www/html/config/google_oauth_client.json:ro
+    labels:
+      - "app=transcendence"
+      - "tier=api"
+    environment:
+      - APP_ENV=${ENV:-development}
+      - APP_DEBUG=${APP_DEBUG:-true}
+      - DB_DATABASE=/var/www/html/database/database.sqlite
+      - FRONTEND_URL=${FRONTEND_URL:-https://localhost:9443}
+      - GOOGLE_OAUTH_CONFIG=/var/www/html/config/google_oauth_client.json
+    secrets:
+      - app_key
+      - jwt_secret
+    healthcheck:
+      test: ["CMD", "php-fpm", "-t"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    networks: 
+      - backend
+      - monitoring
+    # Ejecutar como usuario root para resolver problemas de permisos
+    user: root
+    # Configuración de logging
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+        labels: "tier,app"
+    # Mejoras de seguridad
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+      - SETGID
+    security_opt:
+      - no-new-privileges:true
+    # Límites de recursos
+    deploy:
+      resources:
+        limits:
+#          cpus: '0.5'
+          memory: 256M
+        reservations:
+#          cpus: '0.25'
+          memory: 128M
+    # Reinicio automático
+    restart: unless-stopped
+    profiles: ["default", "prod", "dev", "monitoring"]
+
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: ../docker/frontend/Dockerfile
+    container_name: transcendence-frontend
+    expose:
+      - "${FRONTEND_PORT:-3000}"
+    volumes:
+      # Montar solo archivos necesarios, no node_modules
+      - ../frontend/index.html:/app/index.html:ro
+      - ../frontend/indexf.html:/app/indexf.html:ro
+      - ../frontend/src:/app/src
+      - ../frontend/assets:/app/assets:ro
+    labels:
+      - "app=transcendence"
+      - "tier=ui"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000/index.html"]
+      interval: 10s
+      timeout: 15s
+      retries: 5
+      start_period: 30s
+    networks: 
+      - frontend
+    # Configuración de logging
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+        labels: "tier,app"
+    # Mejoras de seguridad
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    # Límites de recursos
+    deploy:
+      resources:
+        limits:
+#          cpus: '0.5'
+          memory: 512M
+        reservations:
+#          cpus: '0.25'
+          memory: 256M
+    # Reinicio automático
+    restart: unless-stopped
+    profiles: ["default", "prod", "dev", "monitoring"]
+
+  game-ws:
+    build:
+      context: ../game-ws
+      dockerfile: ../docker/game-ws/Dockerfile
+    container_name: transcendence-game-ws
+    expose:
+      - "${GAME_WS_CONTAINER_PORT:-8080}"
+    secrets:
+      - jwt_secret
+    volumes:
+      - ../game-ws:/app
+      - /app/vendor
+    labels:
+      - "app=transcendence"
+      - "tier=websocket"
+    healthcheck:
+      test: ["CMD-SHELL", "php -r 'exit(@fsockopen(\"localhost\", ${GAME_WS_CONTAINER_PORT:-8080}) ? 0 : 1);'"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    networks: 
+      - backend
+      - game
+    # Configuración de logging
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+        labels: "tier,app"
+    # Mejoras de seguridad
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    # Límites de recursos
+    deploy:
+      resources:
+        limits:
+#          cpus: '0.5'
+          memory: 256M
+        reservations:
+#          cpus: '0.25'
+          memory: 128M
+    # Reinicio automático
+    restart: unless-stopped
+    profiles: ["default", "prod", "dev"]
+
+  # Servicios de monitorización - All made to listen on 127.0.0.1 only
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: transcendence-prometheus
+    volumes:
+      - ../monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../monitoring/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+    expose:
+      - "9090"
+    ports:
+      - "127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"
+    # Simpler healthcheck
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9090/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks: [monitoring]
+    # Mejoras de seguridad
+    user: "nobody"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    # Límites de recursos
+    deploy:
+      resources:
+        limits:
+#          cpus: '0.5'
+          memory: 512M
+        reservations:
+#          cpus: '0.25'
+          memory: 256M
+    # Reinicio automático
+    restart: unless-stopped
+    profiles: ["default", "monitoring", "prod"]
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: transcendence-grafana
+    volumes:
+      - ../monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "127.0.0.1:${GRAFANA_PORT:-3001}:3000"
+    environment:
+      - GF_SECURITY_ALLOW_EMBEDDING=true
+      - GF_SECURITY_DISABLE_GRAVATAR=true
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_SECURITY_ADMIN_USER__FILE=/run/secrets/grafana_admin_user
+      - GF_SECURITY_ADMIN_PASSWORD__FILE=/run/secrets/grafana_admin_password
+      # Allow direct access on port 3001 and via Nginx subpath
+      - GF_SERVER_ROOT_URL=http://localhost:3001/
+      - GF_SERVER_SERVE_FROM_SUB_PATH=false
+    secrets:
+      - grafana_admin_user
+      - grafana_admin_password
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks: [monitoring]
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    # Mejoras de seguridad
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    # Límites de recursos
+    deploy:
+      resources:
+        limits:
+#          cpus: '0.5'
+          memory: 512M
+        reservations:
+#          cpus: '0.25'
+          memory: 256M
+    # Reinicio automático
+    restart: unless-stopped
+    profiles: ["default", "monitoring", "prod"]
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:latest
+    container_name: transcendence-cadvisor
+    security_opt:
+      - apparmor:unconfined
+    ports:
+      - "127.0.0.1:${CADVISOR_PORT:-8081}:8080"
+    command:
+      - '--url_base_prefix=/cadvisor'
+      - '--housekeeping_interval=10s'
+      - '--docker_only=true'
+      - '--disable_metrics=disk,diskIO,tcp,udp,percpu,sched,process'
+    networks: [monitoring]
+    # NOTE: Configuration optimized for Linux (42 School environment)
+    # On macOS Docker Desktop, container detection works but stats fail due to VM layer
+    # In production Linux environment, this configuration provides full container monitoring
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/cadvisor/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+#          cpus: '0.5'
+          memory: 256M
+        reservations:
+#          cpus: '0.2'
+          memory: 128M
+    # Logging
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    # Reinicio automático
+    restart: unless-stopped
+    profiles: ["default", "monitoring", "prod"]
+
+  node-exporter:
+    image: prom/node-exporter:latest
+    container_name: transcendence-node-exporter
+    command:
+      - '--web.listen-address=:9100'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+    expose:
+      - "9100"
+    networks: [monitoring]
+    # Mejoras de seguridad
+    read_only: true
+    cap_drop:
+      - ALL
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+#          cpus: '0.25'
+          memory: 64M
+        reservations:
+#          cpus: '0.1'
+          memory: 32M
+    # Logging
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+    # Reinicio automático
+    restart: unless-stopped
+    profiles: ["default", "monitoring", "prod"]
+
+  nginx-exporter:
+    image: nginx/nginx-prometheus-exporter:latest
+    container_name: transcendence-nginx-exporter
+    command:
+      - -nginx.scrape-uri=http://nginx:80/nginx_status
+    expose:
+      - "9113"
+    networks: [monitoring]
+    depends_on:
+      - nginx
+    # Mejoras de seguridad
+    read_only: true
+    cap_drop:
+      - ALL
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+#          cpus: '0.25'
+          memory: 64M
+        reservations:
+#          cpus: '0.1'
+          memory: 32M
+    # Logging
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+    # Reinicio automático
+    restart: unless-stopped
+    profiles: ["default", "monitoring", "prod"]
+
+  php-fpm-exporter:
+    image: ghcr.io/hipages/php-fpm_exporter:latest
+    container_name: transcendence-php-fpm-exporter
+    command:
+      - server
+      - --phpfpm.scrape-uri=tcp://backend:9000/status
+      - --phpfpm.fix-process-count=true
+    expose:
+      - "9253"
+    networks: [monitoring]
+    depends_on:
+      - backend
+    # Mejoras de seguridad
+    read_only: true
+    cap_drop:
+      - ALL
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+#          cpus: '0.25'
+          memory: 64M
+        reservations:
+#          cpus: '0.1'
+          memory: 32M
+    # Logging
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+    # Reinicio automático
+    restart: unless-stopped
+    profiles: ["default", "monitoring", "prod"]
+
+  # Development Services (directly exposed ports)
+  dev-frontend:
+    build:
+      context: ../frontend
+      dockerfile: ../docker/frontend/Dockerfile
+    container_name: transcendence-dev-frontend
+    ports:
+      - "127.0.0.1:${DEV_FRONTEND_PORT:-9280}:${FRONTEND_PORT:-3000}"
+    volumes:
+      - ../frontend:/app
+      - /app/node_modules
+    labels:
+      - "app=transcendence"
+      - "tier=ui"
+      - "environment=development"
+    networks: [default]
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+    profiles: ["dev"]
+
+  dev-backend:
+    build:
+      context: ..
+      dockerfile: docker/backend/Dockerfile
+    container_name: transcendence-dev-backend
+    ports:
+      - "127.0.0.1:${DEV_BACKEND_PORT:-9380}:${BACKEND_PORT:-9000}"
+    volumes:
+      - ../backend:/var/www/html
+    labels:
+      - "app=transcendence"
+      - "tier=api"
+      - "environment=development"
+    environment:
+      - APP_ENV=development
+      - APP_DEBUG=true
+      - DB_DATABASE=/var/www/html/database/database.sqlite
+    networks: [default]
+    user: root
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+      - SETGID
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+    profiles: ["dev"]
+
+  dev-game-ws:
+    build:
+      context: ../game-ws
+      dockerfile: ../docker/game-ws/Dockerfile
+    container_name: transcendence-dev-game-ws
+    ports:
+      - "127.0.0.1:${DEV_GAME_WS_PORT:-9480}:${GAME_WS_CONTAINER_PORT:-8080}"
+    volumes:
+      - ../game-ws:/app
+    labels:
+      - "app=transcendence"
+      - "tier=websocket"
+      - "environment=development"
+    networks: [default]
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+    profiles: ["dev"]
+
+  # Testing service
+  tester:
+    build: 
+      context: ../tests
+      dockerfile: Dockerfile
+    container_name: transcendence-tester
+    depends_on:
+      nginx:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+      game-ws:
+        condition: service_healthy
+    networks:
+      - default
+      - monitoring
+    environment:
+      BASE_URL: http://nginx
+      WS_URL: ws://nginx/ws
+      PROM_URL: http://prometheus:9090
+      GRAFANA_URL: http://grafana:3000
+      GRAFANA_USER: admin
+      GRAFANA_PASS: ${GRAFANA_ADMIN_PASSWORD:-admin}
+    profiles: ["test"]
+    restart: "no"
+
+# Weave Scope - Visualización de la infraestructura
+  scope:
+    image: weaveworks/scope:1.13.2
+    container_name: transcendence-scope
+    # 🔑 Permisos y visibilidad
+    privileged: true          # acceso a /proc, netns, conntrack
+    pid: "host"               # ve los PIDs reales del host
+    # Add docker group to access socket in restricted environments (42 campus)
+    group_add:
+      - "999"                 # docker group GID from host
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /var/run/scope/plugins:/var/run/scope/plugins
+      - ../docker/scope/entrypoint.sh:/custom-entrypoint.sh:ro
+    entrypoint: ["/custom-entrypoint.sh"]
+    command:
+      - "--probe.docker=true"
+      - "--weave=false"
+    ports:
+      - "127.0.0.1:${SCOPE_PORT:-9584}:4040"
+    networks:
+      - frontend
+      - backend
+      - monitoring
+      - game
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+#          cpus: '0.5'
+          memory: 256M
+        reservations:
+#          cpus: '0.25'
+          memory: 128M
+    # Logging
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "2"
+    restart: unless-stopped
+    profiles: ["monitoring","dev"]
+
+  # ELK Stack - Log Management and Analysis
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+    container_name: transcendence-elasticsearch
+    environment:
+      - discovery.type=single-node
+      - cluster.name=ft_transcendence
+      - "ES_JAVA_OPTS=-Xms256m -Xmx512m"
+      - xpack.security.enabled=false
+      - xpack.security.enrollment.enabled=false
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+      - ../elk/elasticsearch/elasticsearch.yml:/usr/share/elasticsearch/config/elasticsearch.yml:ro
+    ports:
+      - "127.0.0.1:${ELASTICSEARCH_PORT:-9200}:9200"
+    networks:
+      - monitoring
+    # Resource limits (Elasticsearch necesita más recursos)
+    deploy:
+      resources:
+        limits:
+#          cpus: '1.0'
+          memory: 1G
+        reservations:
+#          cpus: '0.5'
+          memory: 512M
+    # Logging
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    restart: unless-stopped
+    profiles: ["elk"]
+
+  logstash:
+    image: docker.elastic.co/logstash/logstash:8.11.0
+    container_name: transcendence-logstash
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    volumes:
+      - ../elk/logstash/logstash.conf:/usr/share/logstash/pipeline/logstash.conf:ro
+      - ../logs/nginx:/var/log/nginx:ro
+    environment:
+      - "LS_JAVA_OPTS=-Xmx256m -Xms128m"
+    networks:
+      - monitoring
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+#          cpus: '0.5'
+          memory: 512M
+        reservations:
+#          cpus: '0.25'
+          memory: 256M
+    # Logging
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "2"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9600 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+    profiles: ["elk"]
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.11.0
+    container_name: transcendence-kibana
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    volumes:
+      - ../elk/kibana/kibana.yml:/usr/share/kibana/config/kibana.yml:ro
+    ports:
+      - "127.0.0.1:${KIBANA_PORT:-5601}:5601"
+    networks:
+      - monitoring
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+      - NODE_OPTIONS="--max-old-space-size=512"
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+#          cpus: '0.75'
+          memory: 768M
+        reservations:
+#          cpus: '0.5'
+          memory: 512M
+    # Logging
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "2"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:5601/api/status || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+    restart: unless-stopped
+    profiles: ["elk"]
+
+
+# Redes definidas
+networks:
+  frontend:
+    driver: bridge
+    name: transcendence_frontend
+  backend:
+    driver: bridge
+    name: transcendence_backend
+  game:
+    driver: bridge
+    name: transcendence_game
+  monitoring:
+    driver: bridge
+    name: transcendence_monitoring
+
+# Volúmenes persistentes
+volumes:
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+  elasticsearch_data:
+    driver: local
+  frontend_node_modules:
+    driver: local
+
+# Secretos centralizados
+secrets:
+  app_key:
+    file: ../config/secrets/app_key.secret
+  jwt_secret:
+    file: ../config/secrets/jwt_secret.secret
+  grafana_admin_user:
+    file: ../config/secrets/grafana_admin_user.secret
+  grafana_admin_password:
+    file: ../config/secrets/grafana_admin_password.secret
+  scope_htpasswd:
+    file: ../config/secrets/scope_htpasswd.secret

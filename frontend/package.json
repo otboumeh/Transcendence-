@@ -1,0 +1,20 @@
+{
+  "name": "final-project",
+  "version": "1.0.0",
+  "scripts": {
+    "build:css": "tailwindcss -i ./src/styles/input.css -o ./dist/output.css",
+    "build:ts": "tsc",
+    "build": "npm run build:css && npm run build:ts",
+    "watch:css": "tailwindcss -i ./src/styles/input.css -o ./dist/output.css --watch",
+    "watch:ts": "tsc --watch",
+    "watch": "npm run build && concurrently \"npm:watch:css\" \"npm:watch:ts\"",
+    "start": "npm run build && serve . -l 3000",
+    "dev": "npm run watch & npm run start"
+  },
+  "devDependencies": {
+    "tailwindcss": "^3.4.1",
+    "serve": "^14.2.1",
+    "typescript": "^5.3.3",
+    "concurrently": "^8.2.2"
+  }
+}
